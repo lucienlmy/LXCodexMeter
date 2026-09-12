@@ -5,6 +5,7 @@ import {
   createUsageCsvRows,
   filterAndSortUsageTasks,
   formatUsageTimeRange,
+  isQuotaRecoveryTask,
   usageCsvFileName,
 } from '../src/usageLogUtils.js';
 import { getThemedSelectOpeningIndex, moveThemedSelectIndex } from '../src/themedSelectUtils.js';
@@ -44,6 +45,19 @@ test('gte3 includes exactly 3.0 percent', () => {
   const tasks = [0.5, 1.0, 2.9, 3.0, 3.1, 5.0].map((weekly, index) => task(String(index), weekly));
   const result = filterAndSortUsageTasks(tasks, preferences(), now);
   assert.deepEqual(result.map((item) => item.weeklyConsumedPercent), [3.0, 3.1, 5.0]);
+});
+
+test('quota recovery records stay visible through weekly consumption filters', () => {
+  const recovery = {
+    ...task('recovery', null),
+    recordMode: 'quota_recovery_weekly',
+    endWeeklyRemainingPercent: 100,
+  };
+  assert.equal(isQuotaRecoveryTask(recovery), true);
+  assert.deepEqual(
+    filterAndSortUsageTasks([recovery, task('below', 1)], preferences({ weeklyFilter: 'gte5' }), now).map((item) => item.id),
+    ['recovery'],
+  );
 });
 
 test('quick and custom weekly filters use inclusive thresholds', () => {
@@ -122,6 +136,8 @@ test('usage cards show time and quota balance without a visible status field or 
   assert.doesNotMatch(page, /window\.confirm/);
   assert.doesNotMatch(page, /t\('usageStatus'\)/);
   assert.match(page, /createUsageCsvRows\(filtered\)/);
+  assert.match(page, /isQuotaRecoveryTask/);
+  assert.match(page, /usageQuotaRecoveryWeekly/);
   assert.match(page, /confirmBusyRef\.current/);
 });
 
@@ -231,8 +247,8 @@ test('closing settings restores the captured inner size instead of reusing the o
   assert.doesNotMatch(closeBlock, /setSize\(new PhysicalSize\(restored\.width, restored\.height\)\)/);
 });
 
-test('runtime and package versions are consistently upgraded to 0.6.16', () => {
-  const expected = '0.6.16';
+test('runtime and package versions are consistently upgraded to 0.6.17', () => {
+  const expected = '0.6.17';
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const packageLock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
   const tauri = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
@@ -243,7 +259,7 @@ test('runtime and package versions are consistently upgraded to 0.6.16', () => {
   assert.equal(packageLock.version, expected);
   assert.equal(packageLock.packages[''].version, expected);
   assert.equal(tauri.version, expected);
-  assert.match(cargo, /^version = "0\.6\.16"$/m);
-  assert.match(cargoLock, /\[\[package\]\]\r?\nname = "lx-codex-meter"\r?\nversion = "0\.6\.16"/);
-  assert.match(app, /APP_VERSION = '0\.6\.16'/);
+  assert.match(cargo, /^version = "0\.6\.17"$/m);
+  assert.match(cargoLock, /\[\[package\]\]\r?\nname = "lx-codex-meter"\r?\nversion = "0\.6\.17"/);
+  assert.match(app, /APP_VERSION = '0\.6\.17'/);
 });

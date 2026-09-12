@@ -215,13 +215,19 @@ mod tests {
         store
             .record_snapshot(snapshot(2_000, 100.0, 50.005), true)
             .unwrap();
-        assert!(store.view(2_000).tasks.is_empty());
+        let reset_view = store.view(2_000);
+        assert_eq!(reset_view.tasks.len(), 1);
+        assert_eq!(
+            reset_view.tasks[0].task.record_mode,
+            "quota_recovery_weekly"
+        );
         store
             .record_snapshot(snapshot(3_000, 99.0, 49.995), true)
             .unwrap();
-        let task = &store.view(3_000).tasks[0].task;
-        assert!((task.weekly_consumed_percent.unwrap() - 1.0).abs() < 0.0001);
-        assert!(task.five_hour_consumed_percent.unwrap() >= 0.0);
+        let view = store.view(3_000);
+        let task = view.tasks.iter().find(|task| task.is_active).unwrap();
+        assert!((task.task.weekly_consumed_percent.unwrap() - 1.0).abs() < 0.0001);
+        assert!(task.task.five_hour_consumed_percent.unwrap() >= 0.0);
     }
 
     #[test]
@@ -237,9 +243,42 @@ mod tests {
             .record_snapshot(snapshot(3_000, 100.0, 58.0), true)
             .unwrap();
         let tasks = store.view(3_000).tasks;
+        assert_eq!(tasks.len(), 2);
+        let reset = tasks
+            .iter()
+            .find(|task| task.task.record_mode == "quota_recovery_weekly")
+            .unwrap();
+        assert_eq!(reset.task.end_weekly_remaining_percent, Some(100.0));
+        let usage = tasks
+            .iter()
+            .find(|task| task.task.record_mode == "automatic")
+            .unwrap();
+        assert!(!usage.is_active);
+        assert_eq!(usage.task.weekly_consumed_percent, Some(3.0));
+    }
+
+    #[test]
+    fn full_recovery_is_recorded_once_even_when_consumption_is_disabled() {
+        let mut store = store();
+        store
+            .record_snapshot(snapshot(1_000, 82.0, 43.0), false)
+            .unwrap();
+        store
+            .record_snapshot(snapshot(2_000, 100.0, 100.0), false)
+            .unwrap();
+        store
+            .record_snapshot(snapshot(3_000, 100.0, 100.0), false)
+            .unwrap();
+
+        let tasks = store.view(3_000).tasks;
         assert_eq!(tasks.len(), 1);
-        assert!(!tasks[0].is_active);
-        assert_eq!(tasks[0].task.weekly_consumed_percent, Some(3.0));
+        assert_eq!(tasks[0].task.record_mode, "quota_recovery_both");
+        assert_eq!(tasks[0].task.started_at_ms, 2_000);
+        assert_eq!(tasks[0].task.duration_seconds, 0);
+        assert_eq!(tasks[0].task.weekly_consumed_percent, None);
+        assert_eq!(tasks[0].task.five_hour_consumed_percent, None);
+        assert_eq!(tasks[0].task.end_weekly_remaining_percent, Some(100.0));
+        assert_eq!(tasks[0].task.end_five_hour_remaining_percent, Some(100.0));
     }
 
     #[test]

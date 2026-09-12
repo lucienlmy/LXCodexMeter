@@ -1,5 +1,6 @@
 import type { UsageLogPreferences, UsageTask } from './types';
 
+export function isQuotaRecoveryTask(task: UsageTask): boolean;
 export function filterAndSortUsageTasks(
   tasks: UsageTask[],
   preferences: UsageLogPreferences,

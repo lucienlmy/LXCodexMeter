@@ -22,6 +22,7 @@ const SCHEMA_VERSION: u32 = 3;
 const MAX_TASKS: usize = 10_000;
 const MIN_CONSUMPTION_PERCENT: f64 = 0.01;
 const RESET_INCREASE_PERCENT: f64 = 10.0;
+const FULL_QUOTA_PERCENT: f64 = 100.0;
 const IDLE_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -294,6 +295,22 @@ impl UsageTaskStore {
             return self.persist();
         };
 
+        let weekly_recovered_full = recovered_to_full(
+            previous.weekly_remaining_percent,
+            current.weekly_remaining_percent,
+        );
+        let five_hour_recovered_full = recovered_to_full(
+            previous.five_hour_remaining_percent,
+            current.five_hour_remaining_percent,
+        );
+        if weekly_recovered_full || five_hour_recovered_full {
+            self.add_quota_recovery_record(
+                &current,
+                weekly_recovered_full,
+                five_hour_recovered_full,
+            );
+        }
+
         if !allow_consumption {
             if let Some(active) = self.data.active_task.as_mut() {
                 active.last_observed_at_ms =
@@ -305,14 +322,22 @@ impl UsageTaskStore {
             return self.persist();
         }
 
-        let weekly = quota_change(
+        let mut weekly = quota_change(
             previous.weekly_remaining_percent,
             current.weekly_remaining_percent,
         );
-        let five_hour = quota_change(
+        let mut five_hour = quota_change(
             previous.five_hour_remaining_percent,
             current.five_hour_remaining_percent,
         );
+        if weekly_recovered_full {
+            weekly.reset = true;
+            weekly.next_baseline = current.weekly_remaining_percent;
+        }
+        if five_hour_recovered_full {
+            five_hour.reset = true;
+            five_hour.next_baseline = current.five_hour_remaining_percent;
+        }
         let end_weekly_remaining_percent = current.weekly_remaining_percent;
         let end_five_hour_remaining_percent = current.five_hour_remaining_percent;
 
@@ -412,6 +437,37 @@ impl UsageTaskStore {
     pub fn save_preferences(&mut self, preferences: UsageLogPreferences) -> Result<(), String> {
         self.data.preferences = preferences.normalized();
         self.persist()
+    }
+
+    fn add_quota_recovery_record(
+        &mut self,
+        current: &UsageSnapshot,
+        weekly_recovered_full: bool,
+        five_hour_recovered_full: bool,
+    ) {
+        let record_mode = match (weekly_recovered_full, five_hour_recovered_full) {
+            (true, true) => "quota_recovery_both",
+            (true, false) => "quota_recovery_weekly",
+            (false, true) => "quota_recovery_five_hour",
+            (false, false) => return,
+        };
+        let captured_at_ms = current.captured_at_ms;
+        self.data.tasks.push(UsageTask {
+            id: unique_task_id(captured_at_ms, &self.data.tasks),
+            started_at_ms: captured_at_ms,
+            ended_at_ms: captured_at_ms,
+            duration_seconds: 0,
+            weekly_consumed_percent: None,
+            five_hour_consumed_percent: None,
+            end_weekly_remaining_percent: current.weekly_remaining_percent,
+            end_five_hour_remaining_percent: current.five_hour_remaining_percent,
+            record_mode: record_mode.to_string(),
+            is_complete: true,
+            is_estimated: false,
+            created_at_ms: captured_at_ms,
+            updated_at_ms: captured_at_ms,
+        });
+        trim_oldest(&mut self.data.tasks);
     }
 
     fn add_consumption(
@@ -516,8 +572,18 @@ fn quota_change(previous: Option<f64>, current: Option<f64>) -> QuotaChange {
     }
 }
 
+fn recovered_to_full(previous: Option<f64>, current: Option<f64>) -> bool {
+    let Some(previous) = valid_percent(previous) else {
+        return false;
+    };
+    let Some(current) = valid_percent(current) else {
+        return false;
+    };
+    previous < FULL_QUOTA_PERCENT && current >= FULL_QUOTA_PERCENT
+}
+
 fn valid_percent(value: Option<f64>) -> Option<f64> {
-    value.filter(|value| value.is_finite() && (0.0..=100.0).contains(value))
+    value.filter(|value| value.is_finite() && (0.0..=FULL_QUOTA_PERCENT).contains(value))
 }
 
 fn replace_baselines(current: UsageSnapshot) -> UsageSnapshot {

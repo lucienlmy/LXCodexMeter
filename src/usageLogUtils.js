@@ -1,3 +1,7 @@
+export function isQuotaRecoveryTask(task) {
+  return typeof task?.recordMode === 'string' && task.recordMode.startsWith('quota_recovery_');
+}
+
 function weeklyThreshold(preferences) {
   switch (preferences.weeklyFilter) {
     case 'all': return null;
@@ -21,7 +25,7 @@ export function filterAndSortUsageTasks(tasks, preferences, now = new Date()) {
   const threshold = weeklyThreshold(preferences);
   const cutoff = timeCutoff(preferences.timeFilter, now);
   return tasks
-    .filter((task) => threshold === null || (
+    .filter((task) => isQuotaRecoveryTask(task) || threshold === null || (
       typeof task.weeklyConsumedPercent === 'number'
       && task.weeklyConsumedPercent + Number.EPSILON >= threshold
     ))

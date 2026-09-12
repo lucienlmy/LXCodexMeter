@@ -6,7 +6,9 @@ import { tr } from './i18n';
 import {
   createUsageCsvRows,
   filterAndSortUsageTasks,
+  formatLocalDateTime,
   formatUsageTimeRange,
+  isQuotaRecoveryTask,
   usageCsvFileName,
 } from './usageLogUtils.js';
 import type {
@@ -31,6 +33,12 @@ function formatPercent(value: number | null): string {
   if (value === null) return '--';
   if (value > 0 && value < 0.05) return '<0.1%';
   return `${value.toFixed(1)}%`;
+}
+
+function quotaRecoveryLabel(task: UsageTask, t: (key: string) => string): string {
+  if (task.recordMode === 'quota_recovery_both') return t('usageQuotaRecoveryBoth');
+  if (task.recordMode === 'quota_recovery_five_hour') return t('usageQuotaRecoveryFiveHour');
+  return t('usageQuotaRecoveryWeekly');
 }
 
 function formatDuration(seconds: number, lang: Language): string {
@@ -119,15 +127,16 @@ export default function UsageLogPage({ lang }: { lang: Language }) {
     [preferences, view?.tasks],
   );
   const summary = useMemo(() => {
-    const weeklyValues = filtered
+    const usageTasks = filtered.filter((task) => !isQuotaRecoveryTask(task));
+    const weeklyValues = usageTasks
       .map((task) => task.weeklyConsumedPercent)
       .filter((value): value is number => value !== null);
     const weeklyTotal = weeklyValues.length
       ? weeklyValues.reduce((total, value) => total + value, 0)
       : null;
-    const longest = filtered.reduce((maximum, task) => Math.max(maximum, task.durationSeconds), 0);
+    const longest = usageTasks.reduce((maximum, task) => Math.max(maximum, task.durationSeconds), 0);
     return {
-      count: filtered.length,
+      count: usageTasks.length,
       weeklyTotal,
       weeklyAverage: weeklyTotal === null ? null : weeklyTotal / weeklyValues.length,
       longest,
@@ -277,10 +286,12 @@ export default function UsageLogPage({ lang }: { lang: Language }) {
         <div className="usage-task-list">
           {filtered.slice(0, visibleCount).map((task) => (
             <article className="usage-task-row" key={task.id}>
-              <div className="usage-task-time">{formatUsageTimeRange(task, {
-                time: t('usageTimeLabel'),
-                recording: t('usageRecording'),
-              })}</div>
+              <div className="usage-task-time">{isQuotaRecoveryTask(task)
+                ? `${quotaRecoveryLabel(task, t)} · ${formatLocalDateTime(task.startedAtMs)}`
+                : formatUsageTimeRange(task, {
+                    time: t('usageTimeLabel'),
+                    recording: t('usageRecording'),
+                  })}</div>
               <button
                 className="usage-delete"
                 type="button"
@@ -289,10 +300,19 @@ export default function UsageLogPage({ lang }: { lang: Language }) {
                 onClick={() => setConfirmation({ type: 'delete', task })}
               >×</button>
               <dl>
-                <div><dt>{t('usageDuration')}</dt><dd>{formatDuration(task.durationSeconds, lang)}</dd></div>
-                <div className="usage-primary-value"><dt>{t('usageWeeklyConsumed')}</dt><dd>{formatPercent(task.weeklyConsumedPercent)}</dd></div>
-                <div><dt>{t('usageFiveHourConsumed')}</dt><dd>{formatPercent(task.fiveHourConsumedPercent)}</dd></div>
-                <div><dt>{t('usageQuotaBalance')}</dt><dd>{t('usageWeekShort')} {formatPercent(task.endWeeklyRemainingPercent)} · 5h {formatPercent(task.endFiveHourRemainingPercent)}</dd></div>
+                {isQuotaRecoveryTask(task) ? (
+                  <>
+                    <div className="usage-primary-value"><dt>{t('usageWeekShort')}</dt><dd>{formatPercent(task.endWeeklyRemainingPercent)}</dd></div>
+                    <div><dt>5h</dt><dd>{formatPercent(task.endFiveHourRemainingPercent)}</dd></div>
+                  </>
+                ) : (
+                  <>
+                    <div><dt>{t('usageDuration')}</dt><dd>{formatDuration(task.durationSeconds, lang)}</dd></div>
+                    <div className="usage-primary-value"><dt>{t('usageWeeklyConsumed')}</dt><dd>{formatPercent(task.weeklyConsumedPercent)}</dd></div>
+                    <div><dt>{t('usageFiveHourConsumed')}</dt><dd>{formatPercent(task.fiveHourConsumedPercent)}</dd></div>
+                    <div><dt>{t('usageQuotaBalance')}</dt><dd>{t('usageWeekShort')} {formatPercent(task.endWeeklyRemainingPercent)} · 5h {formatPercent(task.endFiveHourRemainingPercent)}</dd></div>
+                  </>
+                )}
               </dl>
             </article>
           ))}
@@ -318,8 +338,12 @@ export default function UsageLogPage({ lang }: { lang: Language }) {
         description={t(confirmation.type === 'delete' ? 'usageDeleteConfirmDescription' : 'usageClearConfirm')}
         details={confirmation.type === 'delete' ? (
           <>
-            <span>{formatUsageTimeRange(confirmation.task, { time: t('usageTimeLabel'), recording: t('usageRecording') })}</span>
-            <span>{t('usageWeeklyConsumed')}: {formatPercent(confirmation.task.weeklyConsumedPercent)}</span>
+            <span>{isQuotaRecoveryTask(confirmation.task)
+              ? `${quotaRecoveryLabel(confirmation.task, t)} · ${formatLocalDateTime(confirmation.task.startedAtMs)}`
+              : formatUsageTimeRange(confirmation.task, { time: t('usageTimeLabel'), recording: t('usageRecording') })}</span>
+            <span>{isQuotaRecoveryTask(confirmation.task)
+              ? `${t('usageQuotaBalance')}: ${t('usageWeekShort')} ${formatPercent(confirmation.task.endWeeklyRemainingPercent)} · 5h ${formatPercent(confirmation.task.endFiveHourRemainingPercent)}`
+              : `${t('usageWeeklyConsumed')}: ${formatPercent(confirmation.task.weeklyConsumedPercent)}`}</span>
           </>
         ) : <span>{t('usageClearCount')}: {historicalCount}</span>}
         confirmLabel={t(confirmation.type === 'delete' ? 'usageConfirmDelete' : 'usageConfirmClear')}
